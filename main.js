@@ -23,20 +23,37 @@ function buildWindowTitle(fileName) {
 }
 
 function createWindow() {
+  // 规范化 preload 路径，确保 Windows 上使用正斜杠
+  const preloadPath = path.join(__dirname, 'preload.js');
+  console.log('[Main] Creating window with preload:', preloadPath);
+  console.log('[Main] __dirname:', __dirname);
+  console.log('[Main] preload.js exists:', fs.existsSync(preloadPath));
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
+      nodeIntegration: false
     },
     title: buildWindowTitle(),
     icon: path.join(__dirname, 'icon.png')
   });
 
   mainWindow.loadFile('index.html');
+
+  // 诊断：页面加载后检查 electronAPI 是否可用
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[Main] Page loaded, checking electronAPI...');
+    mainWindow.webContents.executeJavaScript(
+      'JSON.stringify({ hasAPI: !!window.electronAPI, type: typeof window.electronAPI, keys: window.electronAPI ? Object.keys(window.electronAPI) : "N/A", ping: window.electronAPI && window.electronAPI.ping ? window.electronAPI.ping() : "N/A" })'
+    ).then(result => {
+      console.log('[Main] Renderer electronAPI status:', result);
+    }).catch(err => {
+      console.error('[Main] Renderer check failed:', err.message);
+    });
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

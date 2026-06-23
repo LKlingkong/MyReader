@@ -352,4 +352,10 @@ if (window.electronAPI) {
   console.log('[Renderer] electronAPI keys:', Object.keys(window.electronAPI));
   console.log('[Renderer] electronAPI.openFile:', typeof window.electronAPI.openFile);
   console.log('[Renderer] electronAPI.onFileOpened:', typeof window.electronAPI.onFileOpened);
+  if (typeof window.electronAPI.ping === 'function') {
+    console.log('[Renderer] electronAPI.ping():', window.electronAPI.ping());
+  }
+} else {
+  console.error('[Renderer] window.electronAPI is undefined — the preload did not expose any API');
+  console.error('[Renderer] This means the preload script failed to load or execute.');
 }
