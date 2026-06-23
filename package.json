@@ -1,0 +1,79 @@
+{
+  "name": "textreader",
+  "version": "1.0.0",
+  "description": "A desktop text reader application built with Electron — supports .docx and .md with TTS",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": [
+    "electron",
+    "text-reader",
+    "tts",
+    "docx",
+    "markdown"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mammoth": "^1.12.0",
+    "markdown-it": "^14.2.0"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.textreader.app",
+    "productName": "TextReader",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icon.png",
+      "uninstallerIcon": "icon.png",
+      "installerHeaderIcon": "icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icon.png",
+      "category": "Office"
+    }
+  }
+}
