@@ -4,13 +4,76 @@ const fs = require('fs');
 const mammoth = require('mammoth');
 const MarkdownIt = require('markdown-it');
 
+// ---- Node.js 环境 Polyfill（pdfjs-dist 需要浏览器 API） ----
+
+// DOMMatrix polyfill
+if (!globalThis.DOMMatrix) {
+  globalThis.DOMMatrix = class DOMMatrix {
+    constructor(init) {
+      if (init && Array.isArray(init)) {
+        this.a = init[0] || 1; this.b = init[1] || 0;
+        this.c = init[2] || 0; this.d = init[3] || 1;
+        this.e = init[4] || 0; this.f = init[5] || 0;
+      } else {
+        this.a = 1; this.b = 0;
+        this.c = 0; this.d = 1;
+        this.e = 0; this.f = 0;
+      }
+      this.m11 = this.a; this.m12 = this.b;
+      this.m21 = this.c; this.m22 = this.d;
+      this.m41 = this.e; this.m42 = this.f;
+    }
+
+    get isIdentity() {
+      return this.a === 1 && this.b === 0 && this.c === 0 && this.d === 1 && this.e === 0 && this.f === 0;
+    }
+
+    transformPoint() { return { x: 0, y: 0 }; }
+    static fromMatrix() { return new DOMMatrix(); }
+    static fromFloat32Array() { return new DOMMatrix(); }
+  };
+}
+
+// Path2D polyfill
+if (!globalThis.Path2D) {
+  globalThis.Path2D = class Path2D {
+    addPath() {}
+    arc() {}
+    arcTo() {}
+    bezierCurveTo() {}
+    closePath() {}
+    ellipse() {}
+    lineTo() {}
+    moveTo() {}
+    quadraticCurveTo() {}
+    rect() {}
+    roundRect() {}
+  };
+}
+
+// ImageData polyfill
+if (!globalThis.ImageData) {
+  globalThis.ImageData = class ImageData {
+    constructor(width, height) {
+      this.width = width || 1;
+      this.height = height || 1;
+      this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      this.colorSpace = 'srgb';
+    }
+  };
+}
+
 // pdfjs-dist 是 ESM-only 模块，通过动态 import 延迟加载
+// 使用 legacy 构建以获得更好的 Node.js 兼容性
 let pdfjsLib = null;
 
 async function getPdfjsLib() {
   if (!pdfjsLib) {
-    pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    // 禁用 worker，在主线程运行
     pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+    // 关闭字体渲染（仅提取文本）
+    pdfjsLib.GlobalWorkerOptions.workerPort = null;
   }
   return pdfjsLib;
 }
