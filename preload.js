@@ -14,37 +14,32 @@ console.log('[Preload] === PRELOAD START ===');
 
     console.log('[Preload] Calling exposeInMainWorld...');
     contextBridge.exposeInMainWorld('electronAPI', {
-      // 简单测试方法
-      ping: () => 'pong',
-
-      // 请求主进程打开文件选择对话框
-      openFile: () => {
+      ping: function () {
+        return 'pong';
+      },
+      openFile: function () {
         console.log('[Preload] openFile() invoked');
         return ipcRenderer.invoke('dialog:openFile');
       },
-
-      // 监听文件打开事件
-      onFileOpened: (callback) => {
+      onFileOpened: function (callback) {
         console.log('[Preload] onFileOpened() registered');
-        const handler = (_event, fileData) => callback(fileData);
+        var handler = function (_event, fileData) {
+          callback(fileData);
+        };
         ipcRenderer.on('file:opened', handler);
-        return () => {
+        return function () {
           ipcRenderer.removeListener('file:opened', handler);
         };
       },
-
-      // 监听应用清理指令
-      onAppCleanup: (callback) => {
+      onAppCleanup: function (callback) {
         console.log('[Preload] onAppCleanup() registered');
-        const handler = () => callback();
+        var handler = function () { callback(); };
         ipcRenderer.on('app:cleanup', handler);
-        return () => {
+        return function () {
           ipcRenderer.removeListener('app:cleanup', handler);
         };
       },
-
-      // 移除文件监听
-      removeAllFileListeners: () => {
+      removeAllFileListeners: function () {
         console.log('[Preload] removeAllFileListeners() called');
         ipcRenderer.removeAllListeners('file:opened');
       }
