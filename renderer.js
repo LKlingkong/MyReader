@@ -106,6 +106,52 @@ function initTTS() {
   });
 }
 
+// ---- 错误显示 ----
+
+function showError(title, msg) {
+  contentEl.innerHTML = `
+    <div class="placeholder">
+      <div class="placeholder-icon">⚠️</div>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(msg)}</p>
+    </div>`;
+  statusFile.textContent = 'Error';
+  statusSize.textContent = '';
+}
+
+/**
+ * 安全地调用 electronAPI.openFile()，处理各种边界情况
+ */
+function safeOpenFile() {
+  if (!isElectronAPIAvailable()) {
+    console.error('[Renderer] window.electronAPI.openFile is not available');
+    showError('API 未就绪',
+      'window.electronAPI 不可用。<br><br>可能原因：<br>1. preload.js 加载失败<br>2. contextBridge 未正确暴露 API<br><br>请打开开发者工具 (Ctrl+Shift+I) 查看控制台错误。');
+    return;
+  }
+
+  try {
+    const result = window.electronAPI.openFile();
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => {
+        console.error('[Renderer] openFile IPC failed:', err);
+        showError('无法打开文件', `IPC 调用失败: ${err.message || err}`);
+      });
+    } else if (result && typeof result.then === 'function') {
+      // 有 then 但没有 catch（不太可能，但做防御处理）
+      result.then(() => {}, (err) => {
+        console.error('[Renderer] openFile IPC failed:', err);
+        showError('无法打开文件', `IPC 调用失败: ${err.message || err}`);
+      });
+    }
+    // 如果 openFile() 返回的不是 Promise（比如 undefined），只记录日志
+    // 文件对话框由主进程直接打开，不需要等待返回结果
+  } catch (err) {
+    console.error('[Renderer] openFile threw synchronously:', err);
+    showError('调用失败', `调用 openFile 时发生异常: ${err.message || err}`);
+  }
+}
+
 // ---- 全局键盘快捷键（独立于 TTS） ----
 
 document.addEventListener('keydown', (e) => {
@@ -116,11 +162,11 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // Ctrl/Cmd+O: 打开文件
+  // 注意：Electron 菜单 accelerator 会优先拦截此组合键，这里的 handler 作为后备
   if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
     e.preventDefault();
-    if (window.electronAPI) {
-      window.electronAPI.openFile();
-    }
+    console.log('[Renderer] Ctrl+O pressed');
+    safeOpenFile();
   }
 });
 
@@ -258,7 +304,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 // 监听主进程发来的清理指令（仅当 electronAPI 可用时）
-if (window.electronAPI) {
+if (window.electronAPI && typeof window.electronAPI.onAppCleanup === 'function') {
   window.electronAPI.onAppCleanup(() => {
     if (_cleanedUp) return;
     _cleanedUp = true;
@@ -268,7 +314,13 @@ if (window.electronAPI) {
 
 // ---- 事件绑定 ----
 
-if (window.electronAPI) {
+// ---- 检查 electronAPI 是否可用 ----
+
+function isElectronAPIAvailable() {
+  return !!(window.electronAPI && typeof window.electronAPI.openFile === 'function');
+}
+
+if (window.electronAPI && typeof window.electronAPI.onFileOpened === 'function') {
   const unsubscribeFile = window.electronAPI.onFileOpened((fileData) => {
     console.log(`[Renderer] file:opened — "${fileData.fileName}" (${fileData.extension})`);
     updateUI(fileData);
@@ -278,13 +330,15 @@ if (window.electronAPI) {
   window.addEventListener('beforeunload', () => {
     if (unsubscribeFile) unsubscribeFile();
   });
-
-  btnOpen.addEventListener('click', () => {
-    window.electronAPI.openFile();
-  });
 } else {
-  console.error('[Renderer] window.electronAPI is not available — preload may have failed');
+  console.error('[Renderer] window.electronAPI.onFileOpened is not available — preload may have failed');
 }
+
+// Open 按钮 — 无论 electronAPI 是否就绪都注册点击事件
+btnOpen.addEventListener('click', () => {
+  console.log('[Renderer] Open button clicked');
+  safeOpenFile();
+});
 
 contentEl.addEventListener('mouseup', handleTextSelection);
 
@@ -293,3 +347,9 @@ contentEl.addEventListener('mouseup', handleTextSelection);
 initTTS();
 console.log('[Renderer] TextReader initialized — waiting for file...');
 console.log(`[Renderer] TTS supported: ${ttsSupported}`);
+console.log(`[Renderer] electronAPI available: ${!!window.electronAPI}`);
+if (window.electronAPI) {
+  console.log('[Renderer] electronAPI keys:', Object.keys(window.electronAPI));
+  console.log('[Renderer] electronAPI.openFile:', typeof window.electronAPI.openFile);
+  console.log('[Renderer] electronAPI.onFileOpened:', typeof window.electronAPI.onFileOpened);
+}

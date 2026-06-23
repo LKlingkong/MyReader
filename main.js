@@ -129,7 +129,12 @@ function convertMarkdown(buffer) {
 // ---- 文件打开与 IPC 发送 ----
 
 async function handleFileOpen() {
+  console.log('[Main] handleFileOpen() called, mainWindow:', mainWindow ? 'exists' : 'null');
   try {
+    // 确保窗口获得焦点（修复 Windows 上对话框可能隐藏在后台的问题）
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+    }
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '打开文档',
       filters: [
@@ -141,7 +146,12 @@ async function handleFileOpen() {
       properties: ['openFile']
     });
 
-    if (result.canceled || result.filePaths.length === 0) {
+    if (result.canceled) {
+      console.log('[Main] File dialog cancelled by user');
+      return;
+    }
+    if (result.filePaths.length === 0) {
+      console.log('[Main] No file selected');
       return;
     }
 
@@ -224,6 +234,7 @@ async function handleFileOpen() {
     );
 
   } catch (error) {
+    console.error('[Main] handleFileOpen error:', error);
     dialog.showErrorBox(
       '意外错误',
       `发生意外错误:\n${error.message}`
