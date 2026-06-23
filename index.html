@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <!-- CSP 暂时移除用于诊断 — Electron 42 中 file:// 的 CSP 可能导致问题 -->
+  <!-- CSP 暂时移除用于诊断 -- Electron 42 中 file:// 的 CSP 可能导致问题 -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TextReader</title>
   <style>
@@ -63,11 +63,27 @@
       background: #eee;
     }
 
+    #toolbar button.active {
+      background: #e3f2fd;
+      border-color: #4a90d9;
+      color: #1a6ea8;
+    }
+
     #btnOpen {
       font-weight: 500;
     }
 
-    /* 停止朗读按钮（默认隐藏，朗读时显示） */
+    /* 目录切换按钮 */
+    #btnToc {
+      display: none;
+      font-weight: 500;
+    }
+
+    #btnToc.visible {
+      display: inline-block;
+    }
+
+    /* 停止朗读按钮 */
     #btnStop {
       display: none;
       font-weight: 500;
@@ -94,7 +110,6 @@
       color: #555;
     }
 
-    /* 隐藏原生 checkbox，用 label 驱动 */
     #ttsToggle {
       position: absolute;
       width: 1px;
@@ -113,7 +128,6 @@
       cursor: pointer;
     }
 
-    /* 滑轨 */
     .tts-switch .track {
       position: absolute;
       inset: 0;
@@ -122,7 +136,6 @@
       transition: background 0.25s;
     }
 
-    /* 滑块 */
     .tts-switch .knob {
       position: absolute;
       top: 2px;
@@ -135,7 +148,6 @@
       transition: transform 0.25s;
     }
 
-    /* 开启状态 */
     #ttsToggle:checked + .tts-switch .track {
       background: #4caf50;
     }
@@ -144,7 +156,6 @@
       transform: translateX(18px);
     }
 
-    /* 聚焦环 */
     #ttsToggle:focus-visible + .tts-switch {
       outline: 2px solid #4a90d9;
       outline-offset: 3px;
@@ -156,7 +167,6 @@
       min-width: 60px;
     }
 
-    /* 不支持朗读的提示 */
     #ttsUnsupported {
       display: none;
       color: #d88;
@@ -178,6 +188,93 @@
       color: #1a6ea8;
     }
 
+    /* ====== 主区域：侧边栏 + 内容 ====== */
+    #mainArea {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ====== 目录侧边栏 ====== */
+    #sidebar {
+      display: none;
+      flex-direction: column;
+      width: 260px;
+      min-width: 260px;
+      background: #fafafa;
+      border-right: 1px solid #e0e0e0;
+      overflow: hidden;
+    }
+
+    #sidebar.open {
+      display: flex;
+    }
+
+    #sidebarHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      min-height: 38px;
+    }
+
+    #sidebarHeader .toc-title {
+      user-select: none;
+    }
+
+    #sidebarHeader .toc-count {
+      font-weight: 400;
+      color: #999;
+      font-size: 12px;
+    }
+
+    #tocTree {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .toc-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 4px 12px 4px 8px;
+      font-size: 13px;
+      border: none;
+      background: transparent;
+      color: #555;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.6;
+      transition: background 0.1s, color 0.1s;
+      user-select: none;
+    }
+
+    .toc-item:hover {
+      background: #e8e8e8;
+      color: #333;
+    }
+
+    .toc-item.active {
+      background: #e3f2fd;
+      color: #1a6ea8;
+      font-weight: 600;
+    }
+
+    /* 缩进层级 */
+    .toc-level-1 { padding-left: 12px; font-weight: 600; font-size: 14px; }
+    .toc-level-2 { padding-left: 24px; }
+    .toc-level-3 { padding-left: 36px; font-size: 12px; }
+    .toc-level-4 { padding-left: 48px; font-size: 12px; color: #888; }
+    .toc-level-5 { padding-left: 56px; font-size: 11px; color: #888; }
+    .toc-level-6 { padding-left: 64px; font-size: 11px; color: #999; }
+
     /* ====== 内容展示区 ====== */
     #content {
       flex: 1;
@@ -195,7 +292,7 @@
     }
 
     #content:empty::after {
-      content: 'Press Ctrl+O or click "Open" to load a document (.docx / .md)';
+      content: 'Press Ctrl+O or click "Open" to load a document (.docx / .md / .pdf)';
       display: flex;
       align-items: center;
       justify-content: center;
@@ -205,7 +302,7 @@
       font-style: italic;
     }
 
-    /* ====== 占位符（空状态 / 错误 / 不支持） ====== */
+    /* ====== 占位符（空状态 / 错误） ====== */
     .placeholder {
       display: flex;
       flex-direction: column;
@@ -249,6 +346,7 @@
       padding-bottom: 0.3em;
       border-bottom: 1px solid #e8e8e8;
       line-height: 1.3;
+      scroll-margin-top: 20px;
     }
 
     #content h2 {
@@ -258,6 +356,7 @@
       padding-bottom: 0.25em;
       border-bottom: 1px solid #eee;
       line-height: 1.35;
+      scroll-margin-top: 20px;
     }
 
     #content h3 {
@@ -265,12 +364,14 @@
       font-weight: 600;
       margin: 1em 0 0.4em;
       line-height: 1.4;
+      scroll-margin-top: 20px;
     }
 
     #content h4 {
       font-size: 1.1em;
       font-weight: 600;
       margin: 0.9em 0 0.3em;
+      scroll-margin-top: 20px;
     }
 
     #content h5,
@@ -278,6 +379,7 @@
       font-size: 1em;
       font-weight: 600;
       margin: 0.8em 0 0.2em;
+      scroll-margin-top: 20px;
     }
 
     #content p {
@@ -408,6 +510,25 @@
       background: #f0f4f8;
     }
 
+    /* PDF 页面样式 */
+    .pdf-page {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px dashed #ddd;
+    }
+
+    .pdf-page:last-child {
+      border-bottom: none;
+    }
+
+    .pdf-page-number {
+      text-align: center;
+      color: #aaa;
+      font-size: 12px;
+      margin-bottom: 12px;
+      user-select: none;
+    }
+
     /* 任务列表 (GitHub-style) */
     #content input[type="checkbox"] {
       margin-right: 6px;
@@ -438,6 +559,7 @@
   <div id="toolbar">
     <div class="left-group">
       <button id="btnOpen" title="Open file (Ctrl+O)">📂 Open</button>
+      <button id="btnToc" title="Toggle table of contents">📑 目录</button>
     </div>
     <div class="right-group">
       <!-- 朗读开关 -->
@@ -450,7 +572,7 @@
         </label>
         <span class="tts-label-text" id="ttsLabel">朗读 关</span>
       </div>
-      <!-- 停止按钮（仅朗读时显示） -->
+      <!-- 停止按钮 -->
       <button id="btnStop" title="Stop reading (Esc)">⏹ 停止</button>
       <span id="ttsUnsupported">⚠ 您的环境不支持朗读功能</span>
     </div>
@@ -459,8 +581,20 @@
   <!-- 文件信息栏 -->
   <div id="fileInfo"></div>
 
-  <!-- 内容展示区 -->
-  <div id="content"></div>
+  <!-- 主区域 -->
+  <div id="mainArea">
+    <!-- 目录侧边栏 -->
+    <div id="sidebar">
+      <div id="sidebarHeader">
+        <span class="toc-title">📑 目录</span>
+        <span class="toc-count" id="tocCount"></span>
+      </div>
+      <div id="tocTree"></div>
+    </div>
+
+    <!-- 内容展示区 -->
+    <div id="content"></div>
+  </div>
 
   <!-- 底部状态栏 -->
   <div id="statusBar">

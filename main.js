@@ -4,26 +4,37 @@ const fs = require('fs');
 const mammoth = require('mammoth');
 const MarkdownIt = require('markdown-it');
 
-// 初始化 markdown-it 实例
+// pdfjs-dist 是 ESM-only 模块，通过动态 import 延迟加载
+let pdfjsLib = null;
+
+async function getPdfjsLib() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  }
+  return pdfjsLib;
+}
+
+// 初始化 markdown-it 实例（启用 heading ID 用于 TOC 锚点）
 const md = new MarkdownIt({
-  html: false,         // 安全：不传递原始 HTML，防止 XSS
+  html: false,
   linkify: true,
   typographer: true,
   breaks: true
 });
 
 let mainWindow = null;
-let currentFileName = null;   // 当前打开的文件名
+let currentFileName = null;
 
 const APP_NAME = 'TextReader';
 const APP_SUBTITLE = '文档朗读器';
+const SUPPORTED_EXTENSIONS = ['.docx', '.md', '.pdf'];
 
 function buildWindowTitle(fileName) {
   return fileName ? `${APP_NAME} - ${fileName}` : `${APP_NAME} - ${APP_SUBTITLE}`;
 }
 
 function createWindow() {
-  // 规范化 preload 路径，确保 Windows 上使用正斜杠
   const preloadPath = path.join(__dirname, 'preload.js');
   console.log('[Main] Creating window with preload:', preloadPath);
   console.log('[Main] __dirname:', __dirname);
@@ -43,11 +54,10 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
 
-  // 诊断：页面加载后检查 electronAPI 是否可用
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Page loaded, checking electronAPI...');
     mainWindow.webContents.executeJavaScript(
-      'JSON.stringify({ hasAPI: !!window.electronAPI, type: typeof window.electronAPI, keys: window.electronAPI ? Object.keys(window.electronAPI) : "N/A", ping: window.electronAPI && window.electronAPI.ping ? window.electronAPI.ping() : "N/A" })'
+      'JSON.stringify({ hasAPI: !!window.electronAPI, type: typeof window.electronAPI, keys: window.electronAPI ? Object.keys(window.electronAPI) : "N/A" })'
     ).then(result => {
       console.log('[Main] Renderer electronAPI status:', result);
     }).catch(err => {
@@ -103,8 +113,8 @@ function buildMenu() {
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: '关于 TextReader',
-              message: 'TextReader v1.0.0',
-              detail: '一款支持 .docx 和 .md 格式的桌面文档朗读器。\n\n基于 Electron 构建，使用 Web Speech API 实现划词朗读。'
+              message: 'TextReader v1.1.0',
+              detail: '一款支持 .docx / .md / .pdf 格式的桌面文档朗读器。\n\n基于 Electron 构建，支持章节目录导航与 Web Speech API 朗读。'
             });
           }
         }
@@ -143,21 +153,131 @@ function convertMarkdown(buffer) {
   return { html };
 }
 
+async function convertPdf(buffer) {
+  const lib = await getPdfjsLib();
+  const data = new Uint8Array(buffer);
+  const pdf = await lib.getDocument({ data }).promise;
+  const pages = [];
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+
+    // 按 y 坐标分组（同一行的文字），然后按 x 坐标排序
+    const lines = {};
+    for (const item of textContent.items) {
+      const y = Math.round(item.transform[5]);
+      if (!lines[y]) lines[y] = [];
+      lines[y].push(item);
+    }
+
+    // 按 y 从大到小排序（PDF 坐标原点在左下）
+    const sortedY = Object.keys(lines).sort((a, b) => b - a);
+
+    let pageHtml = `<section class="pdf-page" data-page="${i}">`;
+    if (pdf.numPages > 1) {
+      pageHtml += `<div class="pdf-page-number">第 ${i} 页 / 共 ${pdf.numPages} 页</div>`;
+    }
+
+    for (const y of sortedY) {
+      // 按 x 坐标排序同一行的文字
+      lines[y].sort((a, b) => a.transform[4] - b.transform[4]);
+      const lineText = lines[y].map(item => item.str).join(' ').trim();
+      if (lineText) {
+        // 检测是否是标题（全大写、较短、或单独成行的大字体）
+        const isHeading = detectPdfHeading(lineText, lines[y]);
+        if (isHeading) {
+          pageHtml += `<h3>${escapeHtml(lineText)}</h3>`;
+        } else {
+          pageHtml += `<p>${escapeHtml(lineText)}</p>`;
+        }
+      }
+    }
+
+    pageHtml += '</section>';
+    pages.push(pageHtml);
+  }
+
+  return { html: pages.join('\n') };
+}
+
+/**
+ * 简单的 PDF 标题检测：较短行 + 字体可能较大
+ */
+function detectPdfHeading(text, items) {
+  const len = text.length;
+  // 太长的文本不太可能是标题
+  if (len > 80) return false;
+  // 单行短文本（可能是标题）
+  if (len <= 50 && text.endsWith('.') === false && text.endsWith('。') === false) {
+    // 检查字体大小（如果有的话）
+    if (items.length > 0 && items[0].height > 12) return true;
+    if (len <= 30) return true; // 短文本大概率是标题
+  }
+  return false;
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ---- TOC 提取与 heading ID 注入 ----
+
+/**
+ * 从 HTML 中提取标题，构建目录树，同时给标题添加 id 属性
+ */
+function extractToc(html) {
+  const toc = [];
+  const stack = [{ level: 0, children: toc }];
+  let idCounter = 0;
+
+  // 匹配 h1-h6 标签，包括可能已有的属性
+  const headingRegex = /<h([1-6])(\s[^>]*)?>([\s\S]*?)<\/h\1>/gi;
+
+  const resultHtml = html.replace(headingRegex, (match, level, attrs, text) => {
+    level = parseInt(level);
+    idCounter++;
+    const headingId = `heading-${idCounter}`;
+    const plainText = text.replace(/<[^>]+>/g, '').trim();
+
+    // 构建 TOC 树
+    const item = { level, text: plainText, id: headingId, children: [] };
+
+    // 弹出层级 >= 当前层级的节点
+    while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+      stack.pop();
+    }
+    stack[stack.length - 1].children.push(item);
+    stack.push(item);
+
+    // 保留已有属性，添加/替换 id
+    const existingAttrs = attrs ? attrs.trim() : '';
+    const cleanAttrs = existingAttrs.replace(/\s*id\s*=\s*["'][^"']*["']/g, '');
+    return `<h${level} id="${headingId}"${cleanAttrs ? ' ' + cleanAttrs : ''}>${text}</h${level}>`;
+  });
+
+  return { html: resultHtml, toc };
+}
+
 // ---- 文件打开与 IPC 发送 ----
 
 async function handleFileOpen() {
   console.log('[Main] handleFileOpen() called, mainWindow:', mainWindow ? 'exists' : 'null');
   try {
-    // 确保窗口获得焦点（修复 Windows 上对话框可能隐藏在后台的问题）
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.focus();
     }
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '打开文档',
       filters: [
-        { name: '支持的文档', extensions: ['docx', 'md'] },
+        { name: '支持的文档', extensions: ['docx', 'md', 'pdf'] },
         { name: 'Word 文档', extensions: ['docx'] },
         { name: 'Markdown 文件', extensions: ['md'] },
+        { name: 'PDF 文件', extensions: ['pdf'] },
         { name: '所有文件', extensions: ['*'] }
       ],
       properties: ['openFile']
@@ -176,14 +296,15 @@ async function handleFileOpen() {
     const fileName = path.basename(filePath);
     const ext = path.extname(filePath).toLowerCase();
 
-    if (ext !== '.docx' && ext !== '.md') {
+    if (!SUPPORTED_EXTENSIONS.includes(ext)) {
       mainWindow.webContents.send('file:opened', {
         filePath,
         fileName,
         extension: ext,
         size: 0,
         html: null,
-        error: `不支持的文件格式: "${ext}"。支持的格式: .docx, .md`
+        toc: null,
+        error: `不支持的文件格式: "${ext}"。支持的格式: .docx, .md, .pdf`
       });
       return;
     }
@@ -199,6 +320,7 @@ async function handleFileOpen() {
           extension: ext,
           size: 0,
           html: null,
+          toc: null,
           error: `文件读取失败: ${readError.message}`
         });
       }
@@ -218,29 +340,39 @@ async function handleFileOpen() {
       } else if (ext === '.md') {
         const mdResult = convertMarkdown(fileBuffer);
         html = mdResult.html;
+      } else if (ext === '.pdf') {
+        const pdfResult = await convertPdf(fileBuffer);
+        html = pdfResult.html;
       }
     } catch (convError) {
       conversionError = `转换失败: ${convError.message}`;
       console.error(`[Main] Conversion error for ${fileName}:`, convError);
     }
 
-    // 防止 await 期间窗口被关闭导致 mainWindow 为 null
     if (!mainWindow || mainWindow.isDestroyed()) {
       console.log('[Main] Window closed during file processing, aborting.');
       return;
     }
 
-    // 更新窗口标题
+    // 提取目录结构并注入 heading id
+    let toc = null;
+    if (html && !conversionError) {
+      const tocResult = extractToc(html);
+      html = tocResult.html;
+      toc = tocResult.toc;
+      console.log(`[Main] TOC extracted: ${countTocItems(toc)} headings`);
+    }
+
     currentFileName = fileName;
     mainWindow.setTitle(buildWindowTitle(fileName));
 
-    // 通过 IPC 发送转换后的 HTML 到渲染进程
     mainWindow.webContents.send('file:opened', {
       filePath: filePath,
       fileName: fileName,
       extension: ext,
       size: fileBuffer.length,
       html: html,
+      toc: toc,
       error: conversionError
     });
 
@@ -259,6 +391,14 @@ async function handleFileOpen() {
   }
 }
 
+function countTocItems(toc) {
+  let count = 0;
+  for (const item of toc) {
+    count += 1 + countTocItems(item.children);
+  }
+  return count;
+}
+
 // 注册 IPC 处理器
 function registerIpcHandlers() {
   ipcMain.handle('dialog:openFile', async () => {
@@ -267,9 +407,6 @@ function registerIpcHandlers() {
   });
 }
 
-/**
- * 通知渲染进程清理资源（停止朗读等）
- */
 function notifyRendererCleanup() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
