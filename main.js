@@ -70,9 +70,12 @@ let pdfjsLib = null;
 async function getPdfjsLib() {
   if (!pdfjsLib) {
     pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    // 设置 worker 路径（使用 legacy build 自带的 worker，兼容 Node.js）
-    const workerPath = path.join(__dirname, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.mjs');
+    // 设置 worker 路径，Windows 上需要 file:// URL 格式
+    const workerPath = require('url').pathToFileURL(
+      path.join(__dirname, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.mjs')
+    ).href;
     pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
+    console.log('[Main] pdf.js worker:', workerPath);
   }
   return pdfjsLib;
 }
